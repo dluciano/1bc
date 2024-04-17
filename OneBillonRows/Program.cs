@@ -1,25 +1,55 @@
-﻿var file = args[0];
+﻿using System.Text;
 
-var fileContent = await File.ReadAllTextAsync(file).ConfigureAwait(false);
-var lines = fileContent.Split("\n");
+static string ReadStation(StreamReader stream){
+    var cur = -1;
+    var sb = new StringBuilder();
+    while(true){
+        cur = stream.Read();
+        if(cur == -1) return string.Empty;
+        if(cur == ';') return sb.ToString();
+        sb.Append((char)cur);
+    }
+}
+static decimal ReadMeasurement(StreamReader stream){
+    var cur = -1;
+    var sb = new StringBuilder();
+    while(true){
+        cur = stream.Read();
+        if(cur == -1){
+            if(sb.Length == 0) throw new InvalidProgramException("Incomplete measurement");
+            return decimal.Parse(sb.ToString());
+        }
+        if(cur == '\n') return decimal.Parse(sb.ToString());
+        sb.Append((char)cur);
+    }
+}
+static void UpdateStatistics(
+    Dictionary<string, decimal[]> db,
+    string station,
+    decimal measurement
+) {
+    if (!db.ContainsKey(station))
+        db[station] = [decimal.MaxValue, 0M, 0M, decimal.MinValue];
+    db[station][0] = Math.Min(db[station][0], measurement);
+    db[station][1] = Math.Round(measurement + db[station][1], 1);
+    db[station][2]++;
+    db[station][3] = Math.Max(db[station][3], measurement);
+}
 
-var averages = new Dictionary<string, decimal[]>();
-foreach (var line in lines)
-{
-    var content = line.Split(";");
-    if (content.Length != 2) continue;
-    var station = content[0];
-    var measurement = decimal.Parse(content[1]);
-    if (!averages.ContainsKey(station))
-        averages[station] = [decimal.MaxValue, 0M, 0M, decimal.MinValue];
-    averages[station][0] = Math.Min(averages[station][0], measurement);
-    averages[station][1] = Math.Round(measurement + averages[station][1], 1);
-    averages[station][2]++;
-    averages[station][3] = Math.Max(averages[station][3], measurement);
+var file = args[0];
+
+var statsDb = new Dictionary<string, decimal[]>();
+using var stream = new StreamReader(file);
+
+while(true) {
+    var station = ReadStation(stream);
+    if(station == string.Empty) break;
+    var measurement = ReadMeasurement(stream);
+    UpdateStatistics(statsDb, station, measurement);
 }
 
 Console.Write("{");
-var sortedResults = averages.OrderBy(kv => kv.Key, new NaturalSorting()).ToArray();
+var sortedResults = statsDb.OrderBy(kv => kv.Key, new NaturalSorting()).ToArray();
 for (var i = 0; i < sortedResults.Length; ++i)
 {
     var kv = sortedResults[i];
