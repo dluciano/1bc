@@ -22,7 +22,7 @@
 
   <ItemGroup>
     <!-- Include all files and directories from a specific directory -->
-    <None Include="Data\**" >
+    <None Include="Data\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
