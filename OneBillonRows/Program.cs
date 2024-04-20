@@ -1,77 +1,140 @@
-﻿using System.Text;
-
-static string ReadStation(StreamReader stream){
-    var cur = -1;
-    var sb = new StringBuilder();
-    while(true){
-        cur = stream.Read();
-        if(cur == -1) return string.Empty;
-        if(cur == ';') return sb.ToString();
-        sb.Append((char)cur);
-    }
-}
-static decimal ReadMeasurement(StreamReader stream){
-    var cur = -1;
-    var sb = new StringBuilder();
-    while(true){
-        cur = stream.Read();
-        if(cur == -1){
-            if(sb.Length == 0) throw new InvalidProgramException("Incomplete measurement");
-            return decimal.Parse(sb.ToString());
-        }
-        if(cur == '\n') return decimal.Parse(sb.ToString());
-        sb.Append((char)cur);
-    }
-}
-static void UpdateStatistics(
-    Dictionary<string, decimal[]> db,
-    string station,
-    decimal measurement
-) {
-    if (!db.ContainsKey(station))
-        db[station] = [decimal.MaxValue, 0M, 0M, decimal.MinValue];
-    db[station][0] = Math.Min(db[station][0], measurement);
-    db[station][1] = Math.Round(measurement + db[station][1], 1);
-    db[station][2]++;
-    db[station][3] = Math.Max(db[station][3], measurement);
-}
-
+﻿using System.Text.Unicode;
+using Microsoft.Win32.SafeHandles;
+#if DEBUG
+var file = "/Users/dawlin/Developer/SSD/1bc/measurements_10K copy.txt";
+int numberOfSegments = 2;
+#else
 var file = args[0];
+int numberOfSegments = Environment.ProcessorCount;
+#endif
 
-var statsDb = new Dictionary<string, decimal[]>();
 using var stream = new StreamReader(file);
+string fileName = file;
+long fileLength = stream.BaseStream.Length;
+var fileHandle = File.OpenHandle(fileName);
+var fileSegments = SegmentFile(fileName, fileHandle, fileLength, numberOfSegments);
 
-while(true) {
-    var station = ReadStation(stream);
-    if(station == string.Empty) break;
-    var measurement = ReadMeasurement(stream);
-    UpdateStatistics(statsDb, station, measurement);
-}
-
-Console.Write("{");
-var sortedResults = statsDb.OrderBy(kv => kv.Key, new NaturalSorting()).ToArray();
-for (var i = 0; i < sortedResults.Length; ++i)
+await Parallel.ForEachAsync(fileSegments, async (fileSegment, cancellationToken) =>
 {
-    var kv = sortedResults[i];
-    
-    Console.Write($"{kv.Key}={kv.Value[0]}/{Math.Round(kv.Value[1] / kv.Value[2], 1, MidpointRounding.AwayFromZero)}/{kv.Value[3]}");
-    if(i == sortedResults.Length - 1)continue;
-    Console.Write(", ");
-}
-Console.WriteLine("}");
+    await fileSegment.FileRead(cancellationToken).ConfigureAwait(false);
+});
 
-sealed class NaturalSorting : IComparer<string?>
+Console.WriteLine("Done");
+
+static FileSegment[] SegmentFile(string FileName, SafeFileHandle fileHandle, long fileLength, int numberOfSegments)
 {
-    public int Compare(string? a, string? b)
+    var fileSegments = new FileSegment[numberOfSegments];
+    var bufferSize = fileLength / numberOfSegments;
+    for (var i = 0; i < numberOfSegments; ++i)
     {
-        if(a is null && b is null) return 0;
-        if(a is null) return -1;
-        if(b is null) return 1;
-        if(ReferenceEquals(a, b)) return 0;
-        var min = Math.Min(a.Length, b.Length);
-        for(var i = 0; i < min; ++i)
-            if(a[i] < b[i]) return -1;
-            else if(a[i] > b[i]) return 1;
-        return a.Length - b.Length;
+        var offset = i * bufferSize;
+        fileSegments[i] = new FileSegment(FileName, fileHandle, offset, bufferSize);
+    }
+    return fileSegments;
+}
+
+sealed record FileSegment(string FileName, SafeFileHandle FileHandle, long Offset, long BufferSize)
+{
+    public async Task RandomAccessRead(CancellationToken cancellationToken)
+    {
+        var buffer = new byte[BufferSize];
+        var memory = new Memory<byte>(buffer);
+        var readSize = await RandomAccess.ReadAsync(FileHandle, memory, Offset, cancellationToken).ConfigureAwait(false);
+        ProcessContent();
+        void ProcessContent()
+        {
+            var span = memory.Span;
+            for (int i = 0, inc = 0; i < readSize; i += inc)
+            {
+                var cur = span[i];
+                if ((cur & 0b1100_0000) == 0b1100_0000)
+                    inc = 2;
+                else if ((cur & 0b1110_0000) == 0b1110_0000)
+                    inc = 3;
+                else if ((cur & 0b1111_0000) == 0b1111_0000)
+                    inc = 4;
+                else
+                    inc = 1;
+
+                if (i + inc > readSize)
+                {
+                    // Incomplete first or last line
+                    // Needs to be completed with other segments incomplete lines
+                    break;
+                }
+
+                if (inc == 2)
+                {
+                    var next = span[i + 1];
+                }
+                else if (inc == 3)
+                {
+                    var next = span[i + 1];
+                    var nextNext = span[i + 2];
+                }
+                else if (inc == 4)
+                {
+                    var next = span[i + 1];
+                    var nextNext = span[i + 2];
+                    var nextNextNext = span[i + 3];
+                }
+                else
+                {
+
+                }
+            }
+        }
+    }
+    public async Task FileRead(CancellationToken cancellationToken)
+    {
+        using var stream = File.OpenRead(FileName);
+        var buffer = new byte[BufferSize];
+        var memory = new Memory<byte>(buffer);
+        stream.Position = Offset;
+        var readSize = await stream.ReadAsync(memory, cancellationToken).ConfigureAwait(false);
+        Process();
+        void Process()
+        {
+            var span = memory.Span;
+            for (int i = 0, inc = 0; i < readSize; i += inc)
+            {
+                var cur = span[i];
+                if ((cur & 0b1100_0000) == 0b1100_0000)
+                    inc = 2;
+                else if ((cur & 0b1110_0000) == 0b1110_0000)
+                    inc = 3;
+                else if ((cur & 0b1111_0000) == 0b1111_0000)
+                    inc = 4;
+                else
+                    inc = 1;
+
+                if (i + inc > readSize)
+                {
+                    // Incomplete first or last line
+                    // Needs to be completed with other segments incomplete lines
+                    break;
+                }
+
+                if (inc == 2)
+                {
+                    var next = span[i + 1];
+                }
+                else if (inc == 3)
+                {
+                    var next = span[i + 1];
+                    var nextNext = span[i + 2];
+                }
+                else if (inc == 4)
+                {
+                    var next = span[i + 1];
+                    var nextNext = span[i + 2];
+                    var nextNextNext = span[i + 3];
+                }
+                else
+                {
+
+                }
+            }
+        }
     }
 }
